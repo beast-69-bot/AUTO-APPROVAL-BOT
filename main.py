@@ -13,7 +13,6 @@ from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ChatJoinRequest, ChatMemberUpdated, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiohttp import ClientTimeout
 
 from config import Config
 from db import Database
@@ -663,8 +662,7 @@ async def main() -> None:
         raise RuntimeError("BOT_TOKEN is required")
 
     logging.basicConfig(level=cfg.log_level)
-    timeout = ClientTimeout(total=60)
-    session = AiohttpSession(timeout=timeout)
+    session = AiohttpSession()
     bot = Bot(token=cfg.bot_token, session=session)
     dp = Dispatcher()
     db = Database(cfg.db_path)
@@ -677,11 +675,11 @@ async def main() -> None:
     asyncio.create_task(expiry_worker(bot, cfg, db))
     for attempt in range(5):
         try:
-            await bot.get_me()
+            await bot.get_me(request_timeout=30)
             break
         except TelegramNetworkError:
             await asyncio.sleep(2**attempt)
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, polling_timeout=30)
 
 
 if __name__ == "__main__":
