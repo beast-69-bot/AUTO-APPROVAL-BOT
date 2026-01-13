@@ -9,10 +9,11 @@ from typing import Optional
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ChatJoinRequest, ChatMemberUpdated, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiohttp import ClientTimeout, TCPConnector
+from aiohttp import ClientTimeout
 
 from config import Config
 from db import Database
@@ -663,8 +664,7 @@ async def main() -> None:
 
     logging.basicConfig(level=cfg.log_level)
     timeout = ClientTimeout(total=60)
-    connector = TCPConnector(family=0)  # IPv4
-    session = AiohttpSession(timeout=timeout, connector=connector)
+    session = AiohttpSession(timeout=timeout)
     bot = Bot(token=cfg.bot_token, session=session)
     dp = Dispatcher()
     db = Database(cfg.db_path)
@@ -675,6 +675,12 @@ async def main() -> None:
     dp["db"] = db
 
     asyncio.create_task(expiry_worker(bot, cfg, db))
+    for attempt in range(5):
+        try:
+            await bot.get_me()
+            break
+        except TelegramNetworkError:
+            await asyncio.sleep(2**attempt)
     await dp.start_polling(bot)
 
 
