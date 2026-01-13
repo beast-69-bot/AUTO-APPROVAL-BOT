@@ -8,7 +8,7 @@ from typing import Optional
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, ChatJoinRequest, Message
+from aiogram.types import CallbackQuery, ChatJoinRequest, ChatMemberUpdated, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import Config
@@ -60,6 +60,26 @@ def build_verify_keyboard(token: str) -> InlineKeyboardBuilder:
     return builder
 
 
+def build_approval_message(bot_username: str, chat_title: str) -> str:
+    link = f"https://t.me/{bot_username}?start=join"
+    return (
+        "Thanks for adding me as an admin.\n"
+        f"Chat: {chat_title}\n"
+        "Share this link with users so they can start the bot before requesting to join:\n"
+        f"{link}"
+    )
+
+
+def build_scoped_approval_message(bot_username: str, chat_title: str, chat_id: int) -> str:
+    link = f"https://t.me/{bot_username}?start=join_{chat_id}"
+    return (
+        "Thanks for adding me as an admin.\n"
+        f"Chat: {chat_title}\n"
+        "Share this link with users so they can start the bot before requesting to join:\n"
+        f"{link}"
+    )
+
+
 async def apply_failure_action(
     bot: Bot,
     db: Database,
@@ -99,6 +119,30 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot, cfg: Config, db: Dat
             await bot.decline_chat_join_request(chat_id=chat_id, user_id=user_id)
         except Exception:
             logging.exception("Failed to decline blacklisted join request")
+        return
+    existing = await db.get_latest_request_for_user_chat(user_id, chat_id)
+    if existing and existing["status"] == "verified_pending":
+        await db.mark_verified(existing["id"], now_ts())
+        try:
+            await bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+            try:
+                await bot.send_message(
+                    chat_id=user_id, text=SUCCESS_TEXT[safe_lang(existing["language"])]
+                )
+            except Exception:
+                logging.warning("Failed to notify user after approval")
+        except Exception:
+            logging.exception("Failed to approve pre-verified join request")
+        return
+
+    if existing and existing["status"] in {"awaiting_language", "awaiting_verification"}:
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text="Join request received. Please complete verification in this chat.",
+            )
+        except Exception:
+            logging.warning("Could not notify user about pending verification")
         return
 
     language_token = secrets.token_hex(8)
@@ -269,7 +313,37 @@ async def on_verify(query: CallbackQuery, bot: Bot, cfg: Config, db: Database) -
             chat_id=record["chat_id"], user_id=record["user_id"]
         )
     except Exception:
+        await db.mark_status_for_user_chat(
+            record["user_id"], record["chat_id"], "verified_pending", now_ts()
+        )
         logging.exception("Failed to approve join request")
+        try:
+            await query.message.edit_text(
+                "You are verified. Please request to join the chat now."
+            )
+        except Exception:
+            logging.warning("Failed to update message after approval failure")
+
+
+@router.my_chat_member()
+async def on_bot_promoted(event: ChatMemberUpdated, bot: Bot) -> None:
+    if event.new_chat_member.status not in {"administrator", "creator"}:
+        return
+    if event.old_chat_member.status in {"administrator", "creator"}:
+        return
+    if not event.from_user:
+        return
+    try:
+        bot_username = (await bot.get_me()).username or "your_bot"
+    except Exception:
+        logging.exception("Failed to fetch bot username")
+        bot_username = "your_bot"
+    chat_title = event.chat.title or "this chat"
+    text = build_scoped_approval_message(bot_username, chat_title, event.chat.id)
+    try:
+        await bot.send_message(chat_id=event.from_user.id, text=text)
+    except Exception:
+        logging.exception("Failed to DM approval link to admin")
 
 
 @router.message(Command("status"))
@@ -289,6 +363,82 @@ async def on_status(message: Message, cfg: Config, db: Database) -> None:
 @router.message(Command("start"))
 async def on_start(message: Message, cfg: Config, db: Database, bot: Bot) -> None:
     user_id = message.from_user.id
+    await db.record_user_start(user_id, now_ts())
+    payload = ""
+    parts = message.text.split(maxsplit=1)
+    if len(parts) == 2:
+        payload = parts[1].strip()
+    if payload.startswith("join_"):
+        try:
+            chat_id = int(payload.replace("join_", "", 1))
+        except ValueError:
+            await message.answer("Invalid link payload.")
+            return
+        existing = await db.get_latest_request_for_user_chat(user_id, chat_id)
+        if not existing or existing["status"] in {
+            "failed",
+            "expired",
+            "blocked",
+            "dm_failed",
+            "rejected",
+        }:
+            token = secrets.token_hex(8)
+            expires_at = now_ts() + cfg.language_timeout_seconds
+            await db.upsert_join_request(
+                user_id=user_id,
+                chat_id=chat_id,
+                status="awaiting_language",
+                now=now_ts(),
+                language_token=token,
+                language_expires_at=expires_at,
+            )
+            keyboard = build_language_keyboard(token)
+            await message.answer(WELCOME_TEXT["en"], reply_markup=keyboard.as_markup())
+            return
+        if existing["status"] == "awaiting_language":
+            token = existing["language_token"]
+            expires_at = existing["language_expires_at"] or 0
+            if not token or now_ts() > expires_at:
+                token = secrets.token_hex(8)
+                expires_at = now_ts() + cfg.language_timeout_seconds
+                await db.update_language_token(
+                    request_id=existing["id"],
+                    token=token,
+                    expires_at=expires_at,
+                    now=now_ts(),
+                )
+            keyboard = build_language_keyboard(token)
+            await message.answer(WELCOME_TEXT["en"], reply_markup=keyboard.as_markup())
+            return
+        if existing["status"] == "awaiting_verification":
+            lang = safe_lang(existing["language"])
+            token = existing["verification_token"]
+            expires_at = existing["verification_expires_at"] or 0
+            timeout_value = int(
+                await db.get_setting(
+                    "verify_timeout", str(cfg.verification_timeout_seconds)
+                )
+            )
+            if not token or now_ts() > expires_at:
+                token = secrets.token_hex(8)
+                expires_at = now_ts() + timeout_value
+                await db.update_verification_token(
+                    request_id=existing["id"],
+                    token=token,
+                    expires_at=expires_at,
+                    now=now_ts(),
+                )
+            keyboard = build_verify_keyboard(token)
+            await message.answer(VERIFY_TEXT[lang], reply_markup=keyboard.as_markup())
+            return
+        if existing["status"] == "verified_pending":
+            await message.answer(
+                "You are verified. Please request to join the chat now."
+            )
+            return
+        if existing["status"] == "verified":
+            await message.answer("You are already verified.")
+            return
     pending = await db.get_pending_requests_for_user(user_id)
     if not pending:
         await message.answer("No pending join requests found.")
@@ -341,6 +491,34 @@ async def on_start(message: Message, cfg: Config, db: Database, bot: Bot) -> Non
             sent_any = True
     if not sent_any:
         await message.answer("No pending join requests found.")
+
+
+@router.message(Command("broadcast"))
+async def on_broadcast(message: Message, cfg: Config, db: Database, bot: Bot) -> None:
+    if not is_admin(cfg, message.from_user.id):
+        return
+    if message.chat.type != ChatType.PRIVATE:
+        await message.answer("Please use /broadcast in private chat with the bot.")
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) != 2 or not parts[1].strip():
+        await message.answer("Usage: /broadcast <message>")
+        return
+    text = parts[1].strip()
+    user_ids = await db.list_started_users()
+    if not user_ids:
+        await message.answer("No users to broadcast to.")
+        return
+    sent = 0
+    failed = 0
+    for user_id in user_ids:
+        try:
+            await bot.send_message(chat_id=user_id, text=text)
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    await message.answer(f"Broadcast done. Sent: {sent}, Failed: {failed}.")
 
 
 @router.message(Command("setattempts"))
