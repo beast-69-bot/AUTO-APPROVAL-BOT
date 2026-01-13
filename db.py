@@ -62,6 +62,15 @@ class Database:
                 )
                 """
             )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_starts (
+                    user_id INTEGER PRIMARY KEY,
+                    first_seen INTEGER NOT NULL,
+                    last_seen INTEGER NOT NULL
+                )
+                """
+            )
             await db.commit()
 
     async def get_setting(self, key: str, default: str) -> str:
@@ -110,6 +119,24 @@ class Database:
                 (user_id, now),
             )
             await db.commit()
+
+    async def record_user_start(self, user_id: int, now: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO user_starts(user_id, first_seen, last_seen)
+                VALUES(?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen
+                """,
+                (user_id, now, now),
+            )
+            await db.commit()
+
+    async def list_started_users(self) -> list[int]:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute("SELECT user_id FROM user_starts")
+            rows = await cur.fetchall()
+            return [row[0] for row in rows]
 
     async def upsert_join_request(
         self,
@@ -314,6 +341,34 @@ class Database:
             )
             row = await cur.fetchone()
             return row[0] if row else 0
+
+    async def get_latest_request_for_user_chat(
+        self, user_id: int, chat_id: int
+    ) -> Optional[dict[str, Any]]:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                """
+                SELECT id, status, language, language_token, language_expires_at,
+                       verification_token, verification_expires_at, attempts
+                FROM join_requests
+                WHERE user_id = ? AND chat_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (user_id, chat_id),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "status": row[1],
+                "language": row[2],
+                "language_token": row[3],
+                "language_expires_at": row[4],
+                "verification_token": row[5],
+                "verification_expires_at": row[6],
+                "attempts": row[7],
+            }
 
     async def mark_status_for_user_chat(
         self, user_id: int, chat_id: int, status: str, now: int
