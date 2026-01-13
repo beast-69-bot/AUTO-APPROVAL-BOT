@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Telegram Join Verification Bot
 
 Production-grade Telegram bot that approves join requests only after language selection and human verification.
@@ -40,3 +41,7 @@ Production-grade Telegram bot that approves join requests only after language se
 ## Notes
 - If the bot cannot DM a user, it will not approve the join request.
 - Manual `/approve` requires the user to be whitelisted, acting as explicit admin verification.
+=======
+# AUTO-APPROVAL-BOT
+Production-grade Telegram bot that approves join requests only after language selection and human verification.
+>>>>>>> 9ee63bf7cb28621fb104a3fb79b965c3b9ded887
