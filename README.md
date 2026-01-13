@@ -44,4 +44,4 @@ Production-grade Telegram bot that approves join requests only after language se
 =======
 # AUTO-APPROVAL-BOT
 Production-grade Telegram bot that approves join requests only after language selection and human verification.
->>>>>>> 9ee63bf7cb28621fb104a3fb79b965c3b9ded887
+
