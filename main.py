@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import random
@@ -6,10 +7,12 @@ import time
 from typing import Optional
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ChatJoinRequest, ChatMemberUpdated, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import ClientTimeout, TCPConnector
 
 from config import Config
 from db import Database
@@ -659,7 +662,10 @@ async def main() -> None:
         raise RuntimeError("BOT_TOKEN is required")
 
     logging.basicConfig(level=cfg.log_level)
-    bot = Bot(token=cfg.bot_token)
+    timeout = ClientTimeout(total=60)
+    connector = TCPConnector(family=0)  # IPv4
+    session = AiohttpSession(timeout=timeout, connector=connector)
+    bot = Bot(token=cfg.bot_token, session=session)
     dp = Dispatcher()
     db = Database(cfg.db_path)
     await db.init()
