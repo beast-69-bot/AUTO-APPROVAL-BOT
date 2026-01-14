@@ -1,11 +1,14 @@
 
 import asyncio
 import logging
+import os
 import random
 import secrets
+import socket
 import time
 from typing import Optional
 
+import aiohttp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatType
@@ -447,7 +450,10 @@ async def on_start(message: Message, cfg: Config, db: Database, bot: Bot) -> Non
             return
     pending = await db.get_pending_requests_for_user(user_id)
     if not pending:
-        await message.answer("No pending join requests found.")
+        await message.answer(
+            "No pending join requests found. Please request to join the chat first,"
+            " then come back here to verify."
+        )
         return
     sent_any = False
     for record in pending:
@@ -496,7 +502,10 @@ async def on_start(message: Message, cfg: Config, db: Database, bot: Bot) -> Non
             )
             sent_any = True
     if not sent_any:
-        await message.answer("No pending join requests found.")
+        await message.answer(
+            "No pending join requests found. Please request to join the chat first,"
+            " then come back here to verify."
+        )
 
 
 @router.message(Command("broadcast"))
@@ -665,7 +674,10 @@ async def main() -> None:
         raise RuntimeError("BOT_TOKEN is required")
 
     logging.basicConfig(level=cfg.log_level)
-    session = AiohttpSession()
+    connector = None
+    if os.getenv("TELEGRAM_IPV4_ONLY", "").lower() in {"1", "true", "yes"}:
+        connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    session = AiohttpSession(connector=connector)
     bot = Bot(token=cfg.bot_token, session=session)
     dp = Dispatcher()
     db = Database(cfg.db_path)
