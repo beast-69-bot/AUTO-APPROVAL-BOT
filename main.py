@@ -674,10 +674,16 @@ async def main() -> None:
         raise RuntimeError("BOT_TOKEN is required")
 
     logging.basicConfig(level=cfg.log_level)
-    connector = None
+    session: AiohttpSession
     if os.getenv("TELEGRAM_IPV4_ONLY", "").lower() in {"1", "true", "yes"}:
-        connector = aiohttp.TCPConnector(family=socket.AF_INET)
-    session = AiohttpSession(connector=connector)
+        class IPv4AiohttpSession(AiohttpSession):
+            async def create_session(self) -> aiohttp.ClientSession:
+                connector = aiohttp.TCPConnector(family=socket.AF_INET)
+                return aiohttp.ClientSession(connector=connector)
+
+        session = IPv4AiohttpSession()
+    else:
+        session = AiohttpSession()
     bot = Bot(token=cfg.bot_token, session=session)
     dp = Dispatcher()
     db = Database(cfg.db_path)
