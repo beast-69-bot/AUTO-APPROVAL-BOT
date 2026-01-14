@@ -1,11 +1,10 @@
-<<<<<<< HEAD
 # Telegram Join Verification Bot
 
 Production-grade Telegram bot that approves join requests only after language selection and human verification.
 
 ## Features
 - Join request intake with per-chat verification tokens
-- Language selection (English/हिंदी/Hinglish)
+- Language selection (English/Hindi/Hinglish)
 - Human verification with randomized buttons
 - Max attempts + timeout enforcement
 - Admin controls for settings and lists
@@ -29,6 +28,42 @@ Production-grade Telegram bot that approves join requests only after language se
 4) Run:
    - `python main.py`
 
+## Docker (24x7)
+You can run this 24x7 with Docker as long as the host machine stays online. Use `restart: unless-stopped` so it auto-starts after reboots.
+
+### Option A: Dockerfile + docker run
+Create a `Dockerfile`:
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "main.py"]
+```
+
+Build and run:
+```bash
+docker build -t telegram-join-bot .
+docker run -d --name telegram-join-bot --restart unless-stopped --env-file .env telegram-join-bot
+```
+
+### Option B: docker-compose
+Create a `docker-compose.yml`:
+```yaml
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+```
+
+Run:
+```bash
+docker compose up -d --build
+```
+
 ## Admin Commands
 - `/status`
 - `/setattempts <number>`
@@ -41,7 +76,3 @@ Production-grade Telegram bot that approves join requests only after language se
 ## Notes
 - If the bot cannot DM a user, it will not approve the join request.
 - Manual `/approve` requires the user to be whitelisted, acting as explicit admin verification.
-=======
-# AUTO-APPROVAL-BOT
-Production-grade Telegram bot that approves join requests only after language selection and human verification.
-

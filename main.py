@@ -13,6 +13,7 @@ from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ChatJoinRequest, ChatMemberUpdated, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from dotenv import load_dotenv
 
 from config import Config
 from db import Database
@@ -28,6 +29,8 @@ from texts import (
 )
 
 router = Router()
+
+load_dotenv()
 
 
 def now_ts() -> int:
